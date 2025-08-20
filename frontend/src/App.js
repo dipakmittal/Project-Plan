@@ -11,7 +11,8 @@ import { Label } from "./components/ui/label";
 import { Textarea } from "./components/ui/textarea";
 import { Badge } from "./components/ui/badge";
 import { Separator } from "./components/ui/separator";
-import { Upload, FileText, Plus, Edit, Eye, Trash2, Download, Search } from "lucide-react";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./components/ui/table";
+import { Upload, FileText, Plus, Edit, Eye, Trash2, Download, Search, Save, X, Image, Link } from "lucide-react";
 import { useToast } from "./hooks/use-toast";
 import { Toaster } from "./components/ui/toaster";
 
@@ -54,7 +55,7 @@ const PlanCard = ({ plan, onView, onEdit, onDelete }) => {
 const CreatePlanDialog = ({ isOpen, onClose, onCreate, isUploading }) => {
   const [title, setTitle] = useState("");
   const [file, setFile] = useState(null);
-  const [createMethod, setCreateMethod] = useState("manual"); // "manual" or "upload"
+  const [createMethod, setCreateMethod] = useState("manual");
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -141,7 +142,213 @@ const CreatePlanDialog = ({ isOpen, onClose, onCreate, isUploading }) => {
   );
 };
 
-const PlanViewer = ({ plan, isOpen, onClose, onEdit }) => {
+const ContentRenderer = ({ content, isEditing = false, onContentChange = null }) => {
+  if (!content || content.length === 0) {
+    return <p className="text-gray-500 italic">No content available</p>;
+  }
+
+  const renderContentItem = (item, index) => {
+    switch (item.type) {
+      case 'table':
+        return (
+          <div key={index} className="my-4">
+            <div className="text-sm text-gray-500 mb-2">Table {item.table_index + 1}</div>
+            <div className="border rounded-lg overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    {item.headers?.map((header, i) => (
+                      <TableHead key={i} className="bg-gray-50">{header}</TableHead>
+                    ))}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {item.rows?.map((row, i) => (
+                    <TableRow key={i}>
+                      {item.headers?.map((header, j) => (
+                        <TableCell key={j}>
+                          {isEditing ? (
+                            <Input
+                              value={row[header] || ''}
+                              onChange={(e) => {
+                                if (onContentChange) {
+                                  const newContent = [...content];
+                                  newContent[index].rows[i][header] = e.target.value;
+                                  onContentChange(newContent);
+                                }
+                              }}
+                              className="w-full"
+                            />
+                          ) : (
+                            row[header] || ''
+                          )}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        );
+
+      case 'section':
+        return (
+          <div key={index} className="my-4 space-y-2">
+            {item.content?.map((sectionItem, sIndex) => (
+              <div key={sIndex} className="p-3 bg-gray-50 rounded-lg">
+                {sectionItem.type === 'paragraph' ? (
+                  isEditing ? (
+                    <Textarea
+                      value={sectionItem.content}
+                      onChange={(e) => {
+                        if (onContentChange) {
+                          const newContent = [...content];
+                          newContent[index].content[sIndex].content = e.target.value;
+                          onContentChange(newContent);
+                        }
+                      }}
+                      className="w-full min-h-[60px]"
+                    />
+                  ) : (
+                    <p className="text-sm">{sectionItem.content}</p>
+                  )
+                ) : (
+                  <div className="grid grid-cols-1 gap-1">
+                    {sectionItem.content?.map((cell, cIndex) => (
+                      cell && (
+                        <div key={cIndex} className="text-sm">
+                          <span className="font-mono text-xs text-gray-500 mr-2">
+                            Row {sectionItem.position + 1}, Col {cIndex + 1}:
+                          </span>
+                          {isEditing ? (
+                            <Input
+                              value={cell}
+                              onChange={(e) => {
+                                if (onContentChange) {
+                                  const newContent = [...content];
+                                  newContent[index].content[sIndex].content[cIndex] = e.target.value;
+                                  onContentChange(newContent);
+                                }
+                              }}
+                              className="inline-flex w-auto min-w-[200px] ml-2"
+                            />
+                          ) : (
+                            <span>{cell}</span>
+                          )}
+                        </div>
+                      )
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        );
+
+      case 'navigation':
+        return (
+          <div key={index} className="my-2 p-2 bg-blue-50 rounded-lg border-l-4 border-blue-500">
+            <div className="flex items-center">
+              <Link className="h-4 w-4 mr-2 text-blue-600" />
+              <span className="text-sm text-blue-800 font-medium">{item.content}</span>
+            </div>
+          </div>
+        );
+
+      default:
+        return (
+          <div key={index} className="my-2 p-2 bg-gray-50 rounded">
+            <pre className="text-sm whitespace-pre-wrap">{JSON.stringify(item, null, 2)}</pre>
+          </div>
+        );
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {content.map((item, index) => renderContentItem(item, index))}
+    </div>
+  );
+};
+
+const TableRenderer = ({ tables }) => {
+  if (!tables || tables.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="space-y-6">
+      {tables.map((table, index) => (
+        <div key={index} className="border rounded-lg overflow-hidden">
+          <div className="bg-gray-50 px-4 py-2 border-b">
+            <h4 className="font-semibold text-sm">Table {index + 1}</h4>
+          </div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                {table.headers?.map((header, i) => (
+                  <TableHead key={i}>{header}</TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {table.rows?.map((row, i) => (
+                <TableRow key={i}>
+                  {table.headers?.map((header, j) => (
+                    <TableCell key={j}>{row[header] || ''}</TableCell>
+                  ))}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+const ImageRenderer = ({ images }) => {
+  if (!images || images.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="space-y-4">
+      <h4 className="font-semibold text-sm flex items-center">
+        <Image className="h-4 w-4 mr-2" />
+        Images ({images.length})
+      </h4>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {images.map((image, index) => (
+          <div key={index} className="border rounded-lg p-4">
+            <div className="text-xs text-gray-500 mb-2">
+              Format: {image.format} | Position: {image.anchor}
+            </div>
+            <img
+              src={`data:image/${image.format};base64,${image.data}`}
+              alt={`Excel Image ${index + 1}`}
+              className="max-w-full h-auto rounded"
+              style={{ maxHeight: '200px' }}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const PlanEditor = ({ plan, isOpen, onClose, onSave }) => {
+  const [editedPlan, setEditedPlan] = useState(null);
+  const [activeSection, setActiveSection] = useState('title_sheet');
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (plan) {
+      setEditedPlan({ ...plan });
+    }
+  }, [plan]);
+
   const sections = [
     { key: 'title_sheet', name: 'Title Sheet', icon: '📋' },
     { key: 'revision_history', name: 'Revision History', icon: '📝' },
@@ -159,48 +366,184 @@ const PlanViewer = ({ plan, isOpen, onClose, onEdit }) => {
     { key: 'supplier_management', name: 'Supplier Management', icon: '🤝' }
   ];
 
-  const renderSectionContent = (sectionData) => {
-    if (!sectionData || Object.keys(sectionData).length === 0) {
-      return <p className="text-gray-500 italic">No data available for this section</p>;
-    }
+  const handleSave = async () => {
+    if (!editedPlan) return;
 
-    if (sectionData.error) {
-      return <p className="text-red-500">Error: {sectionData.error}</p>;
+    setIsSaving(true);
+    try {
+      await onSave(editedPlan);
+      onClose();
+    } catch (error) {
+      console.error('Error saving plan:', error);
+    } finally {
+      setIsSaving(false);
     }
-
-    if (sectionData.non_empty_cells) {
-      const cells = Object.entries(sectionData.non_empty_cells).slice(0, 10);
-      return (
-        <div className="space-y-2">
-          {cells.map(([position, value]) => (
-            <div key={position} className="p-2 bg-gray-50 rounded text-sm">
-              <span className="font-mono text-xs text-gray-500">Position {position}: </span>
-              <span>{String(value)}</span>
-            </div>
-          ))}
-          {Object.keys(sectionData.non_empty_cells).length > 10 && (
-            <p className="text-sm text-gray-500">
-              ... and {Object.keys(sectionData.non_empty_cells).length - 10} more items
-            </p>
-          )}
-        </div>
-      );
-    }
-
-    return <pre className="text-sm bg-gray-50 p-3 rounded overflow-auto">{JSON.stringify(sectionData, null, 2)}</pre>;
   };
+
+  const handleSectionContentChange = (sectionKey, newContent) => {
+    setEditedPlan(prev => ({
+      ...prev,
+      [sectionKey]: {
+        ...prev[sectionKey],
+        content: newContent
+      }
+    }));
+  };
+
+  if (!editedPlan) return null;
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+      <DialogContent className="max-w-6xl max-h-[95vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center justify-between">
-            {plan?.title || 'Project Plan'}
+            <div>
+              Edit: {editedPlan.title}
+              <Badge variant="secondary" className="ml-2">{editedPlan.plan_id}</Badge>
+            </div>
             <div className="flex items-center space-x-2">
-              <Badge variant="secondary">{plan?.plan_id}</Badge>
-              <Button size="sm" onClick={() => onEdit(plan)}>
+              <Button size="sm" variant="outline" onClick={onClose}>
+                <X className="h-4 w-4 mr-1" />
+                Cancel
+              </Button>
+              <Button size="sm" onClick={handleSave} disabled={isSaving}>
+                <Save className="h-4 w-4 mr-1" />
+                {isSaving ? 'Saving...' : 'Save Changes'}
+              </Button>
+            </div>
+          </DialogTitle>
+        </DialogHeader>
+        
+        <div className="flex-1 overflow-hidden flex">
+          {/* Section Navigation */}
+          <div className="w-64 border-r bg-gray-50 p-4 overflow-y-auto">
+            <div className="space-y-2">
+              {sections.map((section) => (
+                <button
+                  key={section.key}
+                  onClick={() => setActiveSection(section.key)}
+                  className={`w-full text-left p-3 rounded-lg transition-colors ${
+                    activeSection === section.key
+                      ? 'bg-blue-100 text-blue-900 border-blue-200 border'
+                      : 'hover:bg-gray-100'
+                  }`}
+                >
+                  <div className="flex items-center">
+                    <span className="mr-2">{section.icon}</span>
+                    <span className="text-sm font-medium">{section.name}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Content Area */}
+          <div className="flex-1 p-6 overflow-y-auto">
+            <div className="mb-6">
+              <h3 className="text-lg font-semibold mb-2">
+                {sections.find(s => s.key === activeSection)?.icon} {sections.find(s => s.key === activeSection)?.name}
+              </h3>
+              <p className="text-sm text-gray-600 mb-4">
+                Edit the content for this section. Changes will be saved when you click "Save Changes".
+              </p>
+            </div>
+
+            {/* Title Field */}
+            {activeSection === 'title_sheet' && (
+              <div className="mb-6">
+                <Label htmlFor="planTitle">Plan Title</Label>
+                <Input
+                  id="planTitle"
+                  value={editedPlan.title}
+                  onChange={(e) => setEditedPlan(prev => ({ ...prev, title: e.target.value }))}
+                  className="mt-2"
+                />
+              </div>
+            )}
+
+            {/* Section Content */}
+            <div className="space-y-6">
+              {editedPlan[activeSection]?.content && (
+                <ContentRenderer
+                  content={editedPlan[activeSection].content}
+                  isEditing={true}
+                  onContentChange={(newContent) => handleSectionContentChange(activeSection, newContent)}
+                />
+              )}
+
+              {editedPlan[activeSection]?.tables && editedPlan[activeSection].tables.length > 0 && (
+                <TableRenderer tables={editedPlan[activeSection].tables} />
+              )}
+
+              {editedPlan[activeSection]?.images && editedPlan[activeSection].images.length > 0 && (
+                <ImageRenderer images={editedPlan[activeSection].images} />
+              )}
+
+              {(!editedPlan[activeSection] || (!editedPlan[activeSection].content?.length && !editedPlan[activeSection].tables?.length)) && (
+                <div className="text-center py-12">
+                  <FileText className="h-16 w-16 text-gray-300 mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold text-gray-900 mb-2">No content in this section</h3>
+                  <p className="text-gray-500 mb-4">This section is empty. You can add content by uploading an Excel file or contact support for manual editing features.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
+const PlanViewer = ({ plan, isOpen, onClose, onEdit }) => {
+  const [activeSection, setActiveSection] = useState('title_sheet');
+
+  const sections = [
+    { key: 'title_sheet', name: 'Title Sheet', icon: '📋' },
+    { key: 'revision_history', name: 'Revision History', icon: '📝' },
+    { key: 'definitions_references', name: 'Definitions & References', icon: '📚' },
+    { key: 'project_introduction', name: 'Project Introduction', icon: '🚀' },
+    { key: 'resource_plan', name: 'Resource Plan', icon: '👥' },
+    { key: 'pmc_objectives', name: 'PMC & Objectives', icon: '🎯' },
+    { key: 'quality_management', name: 'Quality Management', icon: '✅' },
+    { key: 'dar_tailoring', name: 'DAR & Tailoring', icon: '⚙️' },
+    { key: 'risk_management', name: 'Risk Management', icon: '⚠️' },
+    { key: 'opportunity_management', name: 'Opportunity Management', icon: '💡' },
+    { key: 'configuration_management', name: 'Configuration Management', icon: '🔧' },
+    { key: 'deliverables', name: 'Deliverables', icon: '📦' },
+    { key: 'skill_matrix', name: 'Skill Matrix', icon: '🎓' },
+    { key: 'supplier_management', name: 'Supplier Management', icon: '🤝' }
+  ];
+
+  // Include dynamic sections from the plan
+  const dynamicSections = plan ? Object.keys(plan).filter(key => 
+    !sections.some(s => s.key === key) && 
+    typeof plan[key] === 'object' && 
+    plan[key] !== null &&
+    !['id', 'plan_id', 'title', 'created_at', 'updated_at'].includes(key)
+  ).map(key => ({
+    key,
+    name: key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+    icon: '📄'
+  })) : [];
+
+  const allSections = [...sections, ...dynamicSections];
+
+  return (
+    <Dialog open={isOpen} onOpenChange={onClose}>
+      <DialogContent className="max-w-6xl max-h-[95vh] overflow-hidden flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="flex items-center justify-between">
+            <div>
+              {plan?.title || 'Project Plan'}
+              <Badge variant="secondary" className="ml-2">{plan?.plan_id}</Badge>
+            </div>
+            <div className="flex items-center space-x-2">
+              <Button size="sm" variant="outline" onClick={() => onEdit(plan)}>
                 <Edit className="h-4 w-4 mr-1" />
                 Edit
+              </Button>
+              <Button size="sm" variant="outline" onClick={onClose}>
+                <X className="h-4 w-4" />
               </Button>
             </div>
           </DialogTitle>
@@ -209,43 +552,82 @@ const PlanViewer = ({ plan, isOpen, onClose, onEdit }) => {
           </DialogDescription>
         </DialogHeader>
         
-        <div className="flex-1 overflow-hidden">
-          <Tabs defaultValue={sections[0].key} className="h-full flex flex-col">
-            <TabsList className="grid grid-cols-7 gap-1 h-auto p-1">
-              {sections.slice(0, 7).map((section) => (
-                <TabsTrigger key={section.key} value={section.key} className="text-xs p-2">
-                  <span className="mr-1">{section.icon}</span>
-                  {section.name}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-            <TabsList className="grid grid-cols-7 gap-1 h-auto p-1 mt-1">
-              {sections.slice(7).map((section) => (
-                <TabsTrigger key={section.key} value={section.key} className="text-xs p-2">
-                  <span className="mr-1">{section.icon}</span>
-                  {section.name}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-            
-            <div className="flex-1 overflow-auto mt-4">
-              {sections.map((section) => (
-                <TabsContent key={section.key} value={section.key} className="h-full">
-                  <Card className="h-full">
-                    <CardHeader>
-                      <CardTitle className="flex items-center">
-                        <span className="mr-2">{section.icon}</span>
-                        {section.name}
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      {renderSectionContent(plan?.[section.key])}
-                    </CardContent>
-                  </Card>
-                </TabsContent>
+        <div className="flex-1 overflow-hidden flex">
+          {/* Section Navigation */}
+          <div className="w-64 border-r bg-gray-50 p-4 overflow-y-auto">
+            <div className="space-y-2">
+              {allSections.map((section) => (
+                <button
+                  key={section.key}
+                  onClick={() => setActiveSection(section.key)}
+                  className={`w-full text-left p-3 rounded-lg transition-colors ${
+                    activeSection === section.key
+                      ? 'bg-blue-100 text-blue-900 border-blue-200 border'
+                      : 'hover:bg-gray-100'
+                  }`}
+                >
+                  <div className="flex items-center">
+                    <span className="mr-2">{section.icon}</span>
+                    <span className="text-sm font-medium">{section.name}</span>
+                  </div>
+                </button>
               ))}
             </div>
-          </Tabs>
+          </div>
+
+          {/* Content Area */}
+          <div className="flex-1 p-6 overflow-y-auto">
+            <div className="mb-6">
+              <h3 className="text-lg font-semibold mb-2">
+                {allSections.find(s => s.key === activeSection)?.icon} {allSections.find(s => s.key === activeSection)?.name}
+              </h3>
+              
+              {/* Metadata */}
+              {plan?.[activeSection]?.metadata && (
+                <div className="text-sm text-gray-600 mb-4">
+                  {plan[activeSection].metadata.sheet_name && (
+                    <span>Sheet: {plan[activeSection].metadata.sheet_name} • </span>
+                  )}
+                  {plan[activeSection].metadata.total_rows && (
+                    <span>Rows: {plan[activeSection].metadata.total_rows} • </span>
+                  )}
+                  {plan[activeSection].metadata.processed_items && (
+                    <span>Items: {plan[activeSection].metadata.processed_items}</span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Content */}
+            <div className="space-y-6">
+              {plan?.[activeSection]?.content && (
+                <ContentRenderer content={plan[activeSection].content} />
+              )}
+
+              {plan?.[activeSection]?.tables && plan[activeSection].tables.length > 0 && (
+                <TableRenderer tables={plan[activeSection].tables} />
+              )}
+
+              {plan?.[activeSection]?.images && plan[activeSection].images.length > 0 && (
+                <ImageRenderer images={plan[activeSection].images} />
+              )}
+
+              {plan?.[activeSection]?.metadata?.error && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                  <h4 className="text-red-800 font-semibold mb-2">Error Processing Section</h4>
+                  <p className="text-red-700 text-sm">{plan[activeSection].metadata.error}</p>
+                </div>
+              )}
+
+              {(!plan?.[activeSection] || (!plan[activeSection].content?.length && !plan[activeSection].tables?.length)) && !plan?.[activeSection]?.metadata?.error && (
+                <div className="text-center py-12">
+                  <FileText className="h-16 w-16 text-gray-300 mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold text-gray-900 mb-2">No content available</h3>
+                  <p className="text-gray-500">This section is empty or was not processed.</p>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </DialogContent>
     </Dialog>
@@ -260,6 +642,7 @@ const Home = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [showViewer, setShowViewer] = useState(false);
+  const [showEditor, setShowEditor] = useState(false);
   const { toast } = useToast();
 
   const loadPlans = async () => {
@@ -286,7 +669,6 @@ const Home = () => {
     setIsUploading(true);
     try {
       if (file) {
-        // Upload file
         const formData = new FormData();
         formData.append('file', file);
         formData.append('title', title);
@@ -302,7 +684,6 @@ const Home = () => {
           description: `Plan uploaded successfully! Plan ID: ${response.data.plan_id}`
         });
       } else {
-        // Manual creation
         const response = await axios.post(`${API}/plans`, { title });
         toast({
           title: "Success",
@@ -321,6 +702,30 @@ const Home = () => {
       });
     } finally {
       setIsUploading(false);
+    }
+  };
+
+  const handleSavePlan = async (editedPlan) => {
+    try {
+      const { id, plan_id, created_at, ...updateData } = editedPlan;
+      
+      const response = await axios.put(`${API}/plans/${plan_id}`, updateData);
+      
+      toast({
+        title: "Success",
+        description: "Plan updated successfully"
+      });
+      
+      loadPlans();
+      setSelectedPlan(response.data);
+    } catch (error) {
+      console.error("Error saving plan:", error);
+      toast({
+        title: "Error",
+        description: error.response?.data?.detail || "Failed to save plan",
+        variant: "destructive"
+      });
+      throw error;
     }
   };
 
@@ -347,13 +752,13 @@ const Home = () => {
   const handleViewPlan = (plan) => {
     setSelectedPlan(plan);
     setShowViewer(true);
+    setShowEditor(false);
   };
 
   const handleEditPlan = (plan) => {
-    // For now, just show the viewer in edit mode
-    // In a full implementation, this would open an edit form
     setSelectedPlan(plan);
-    setShowViewer(true);
+    setShowEditor(true);
+    setShowViewer(false);
   };
 
   const filteredPlans = plans.filter(plan =>
@@ -438,24 +843,34 @@ const Home = () => {
             <CardHeader>
               <CardTitle className="flex items-center">
                 <FileText className="h-5 w-5 mr-2" />
-                Guidelines
+                Guidelines & Features
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div>
                   <h4 className="font-semibold mb-2">Creating Plans</h4>
                   <ul className="text-sm text-gray-600 space-y-1">
                     <li>• Upload Excel files (.xlsx, .xls) for quick setup</li>
                     <li>• Create manual plans using web forms</li>
                     <li>• Each plan gets a unique 8-character ID</li>
+                    <li>• Full editing support for all plan types</li>
+                  </ul>
+                </div>
+                <div>
+                  <h4 className="font-semibold mb-2">Enhanced Features</h4>
+                  <ul className="text-sm text-gray-600 space-y-1">
+                    <li>• Complete tabular data preservation</li>
+                    <li>• Image extraction and display</li>
+                    <li>• Structured content organization</li>
+                    <li>• Navigation link recognition</li>
                   </ul>
                 </div>
                 <div>
                   <h4 className="font-semibold mb-2">Plan Sections</h4>
                   <ul className="text-sm text-gray-600 space-y-1">
-                    <li>• Title Sheet & Revision History</li>
-                    <li>• Project Introduction & Resource Planning</li>
+                    <li>• All 14 standard project sections</li>
+                    <li>• Dynamic sections for custom sheets</li>
                     <li>• Quality, Risk & Opportunity Management</li>
                     <li>• Configuration Management & Deliverables</li>
                   </ul>
@@ -482,6 +897,16 @@ const Home = () => {
           setSelectedPlan(null);
         }}
         onEdit={handleEditPlan}
+      />
+
+      <PlanEditor
+        plan={selectedPlan}
+        isOpen={showEditor}
+        onClose={() => {
+          setShowEditor(false);
+          setSelectedPlan(null);
+        }}
+        onSave={handleSavePlan}
       />
 
       <Toaster />
