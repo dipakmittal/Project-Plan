@@ -11,6 +11,11 @@ import uuid
 from datetime import datetime, timezone
 import pandas as pd
 import io
+import numpy as np
+from openpyxl import load_workbook
+import base64
+from PIL import Image
+import tempfile
 
 
 ROOT_DIR = Path(__file__).parent
@@ -93,8 +98,193 @@ def parse_from_mongo(item):
         return [parse_from_mongo(sub_item) for sub_item in item]
     return item
 
-def process_excel_data(excel_data):
-    """Process uploaded Excel file and extract data"""
+def detect_table_structure(df, start_row=0):
+    """Detect if a section of DataFrame contains tabular data"""
+    if len(df) < 2 or start_row >= len(df) - 1:
+        return None
+    
+    # Look for header-like row followed by data rows
+    for i in range(start_row, min(start_row + 5, len(df) - 1)):
+        row = df.iloc[i]
+        non_null_count = row.notna().sum()
+        
+        # Check if this could be a header row (multiple non-null values)
+        if non_null_count >= 2:
+            # Check next few rows for data
+            data_rows = []
+            for j in range(i + 1, min(i + 10, len(df))):
+                data_row = df.iloc[j]
+                if data_row.notna().sum() >= 2:
+                    data_rows.append(j)
+                elif len(data_rows) >= 2:  # Found at least 2 data rows, stop
+                    break
+            
+            if len(data_rows) >= 2:
+                return {
+                    'header_row': i,
+                    'data_start': i + 1,
+                    'data_end': data_rows[-1] + 1,
+                    'columns': row.dropna().tolist()
+                }
+    
+    return None
+
+def extract_images_from_excel(file_content):
+    """Extract images from Excel file and convert to base64"""
+    images = {}
+    try:
+        # Save to temporary file for openpyxl
+        with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp_file:
+            tmp_file.write(file_content)
+            tmp_file.flush()
+            
+            wb = load_workbook(tmp_file.name)
+            
+            for sheet_name in wb.sheetnames:
+                sheet = wb[sheet_name]
+                sheet_images = []
+                
+                # Extract images from worksheet
+                for image in sheet._images:
+                    try:
+                        # Convert image to base64
+                        img_data = image._data()
+                        img_b64 = base64.b64encode(img_data).decode()
+                        
+                        sheet_images.append({
+                            'anchor': str(image.anchor),
+                            'data': img_b64,
+                            'format': image.format
+                        })
+                    except Exception as e:
+                        logger.warning(f"Could not extract image: {e}")
+                
+                if sheet_images:
+                    images[sheet_name] = sheet_images
+            
+            # Clean up temporary file
+            os.unlink(tmp_file.name)
+            
+    except Exception as e:
+        logger.error(f"Error extracting images: {e}")
+    
+    return images
+
+def process_sheet_content(df, sheet_name):
+    """Process a single sheet with improved structure detection"""
+    if df.empty:
+        return {'content': [], 'tables': [], 'images': [], 'metadata': {}}
+    
+    content = []
+    tables = []
+    current_section = []
+    
+    # Process each row
+    for i in range(len(df)):
+        row = df.iloc[i]
+        row_data = []
+        has_content = False
+        
+        for j in range(len(df.columns)):
+            cell_value = row.iloc[j] if j < len(row) else None
+            if pd.notna(cell_value) and str(cell_value).strip():
+                cell_str = str(cell_value).strip()
+                row_data.append(cell_str)
+                has_content = True
+            else:
+                row_data.append('')
+        
+        if has_content:
+            # Check if this could be start of a table
+            table_structure = detect_table_structure(df, i)
+            if table_structure and i == table_structure['header_row']:
+                # Save current section
+                if current_section:
+                    content.append({
+                        'type': 'section',
+                        'content': current_section
+                    })
+                    current_section = []
+                
+                # Extract table
+                table_data = []
+                headers = table_structure['columns']
+                
+                for table_row_idx in range(table_structure['data_start'], table_structure['data_end']):
+                    if table_row_idx < len(df):
+                        table_row = df.iloc[table_row_idx]
+                        table_row_data = {}
+                        for col_idx, header in enumerate(headers):
+                            if col_idx < len(table_row):
+                                cell_val = table_row.iloc[col_idx]
+                                if pd.notna(cell_val):
+                                    table_row_data[header] = str(cell_val).strip()
+                                else:
+                                    table_row_data[header] = ''
+                        if any(table_row_data.values()):  # Only add non-empty rows
+                            table_data.append(table_row_data)
+                
+                if table_data:
+                    tables.append({
+                        'headers': headers,
+                        'rows': table_data,
+                        'position': i
+                    })
+                    content.append({
+                        'type': 'table',
+                        'table_index': len(tables) - 1,
+                        'position': i
+                    })
+                
+                # Skip to end of table
+                i = table_structure['data_end'] - 1
+                continue
+            
+            # Regular content row
+            # Check for special formatting (like "Back to TOC" links)
+            row_text = ' '.join([cell for cell in row_data if cell])
+            
+            # Identify hyperlinks or special elements
+            if 'back to toc' in row_text.lower():
+                content.append({
+                    'type': 'navigation',
+                    'content': row_text,
+                    'position': i
+                })
+            elif len([cell for cell in row_data if cell]) == 1 and len(row_text) > 20:
+                # Likely a paragraph or description
+                current_section.append({
+                    'type': 'paragraph',
+                    'content': row_text,
+                    'position': i
+                })
+            else:
+                # Regular content
+                current_section.append({
+                    'type': 'row',
+                    'content': row_data,
+                    'position': i
+                })
+    
+    # Add remaining section
+    if current_section:
+        content.append({
+            'type': 'section',
+            'content': current_section
+        })
+    
+    return {
+        'content': content,
+        'tables': tables,
+        'metadata': {
+            'sheet_name': sheet_name,
+            'total_rows': len(df),
+            'processed_items': len(content)
+        }
+    }
+
+def process_excel_data(excel_data, file_content=None):
+    """Process uploaded Excel file and extract data with improved structure"""
     try:
         plan_data = {
             'title_sheet': {},
@@ -113,10 +303,16 @@ def process_excel_data(excel_data):
             'supplier_management': {}
         }
         
-        # Map sheet names to our data structure
+        # Extract images if file content is provided
+        images = {}
+        if file_content:
+            images = extract_images_from_excel(file_content)
+        
+        # Map sheet names to our data structure with variations
         sheet_mapping = {
             'Title Sheet': 'title_sheet',
             'Revision History': 'revision_history',
+            'TOC': 'table_of_contents',  # Add TOC handling
             'Definitions and References': 'definitions_references',
             'Project Introduction': 'project_introduction',
             'Resource Plan and Estimation': 'resource_plan',
@@ -128,34 +324,51 @@ def process_excel_data(excel_data):
             'Configuration Management': 'configuration_management',
             'List of Deliverables': 'deliverables',
             'Skill Matrix': 'skill_matrix',
-            'Supplie Agreement Management': 'supplier_management'
+            'Supplie Agreement Management': 'supplier_management',
+            'Supplier Agreement Management': 'supplier_management'  # Handle typo in original
         }
         
-        for sheet_name, data_key in sheet_mapping.items():
-            if sheet_name in excel_data.sheet_names:
-                try:
-                    df = pd.read_excel(excel_data, sheet_name=sheet_name, header=None)
-                    
-                    # Convert DataFrame to structured data
-                    sheet_data = {'rows': [], 'non_empty_cells': {}}
-                    
-                    for i in range(len(df)):
-                        row_data = []
-                        for j in range(len(df.columns)):
-                            cell_value = df.iloc[i, j]
-                            if pd.notna(cell_value):
-                                cell_str = str(cell_value).strip()
-                                if cell_str:
-                                    sheet_data['non_empty_cells'][f'{i},{j}'] = cell_str
-                                row_data.append(cell_str)
-                            else:
-                                row_data.append('')
-                        sheet_data['rows'].append(row_data)
-                    
-                    plan_data[data_key] = sheet_data
-                except Exception as e:
-                    logger.error(f"Error processing sheet {sheet_name}: {e}")
-                    plan_data[data_key] = {'error': str(e)}
+        available_sheets = excel_data.sheet_names
+        logger.info(f"Available sheets: {available_sheets}")
+        
+        # Process all available sheets, not just mapped ones
+        for sheet_name in available_sheets:
+            data_key = sheet_mapping.get(sheet_name)
+            
+            try:
+                df = pd.read_excel(excel_data, sheet_name=sheet_name, header=None)
+                logger.info(f"Processing sheet '{sheet_name}' with {len(df)} rows")
+                
+                # Process with improved structure detection
+                processed_data = process_sheet_content(df, sheet_name)
+                
+                # Add images for this sheet if available
+                if sheet_name in images:
+                    processed_data['images'] = images[sheet_name]
+                
+                # Store in appropriate section or create dynamic section
+                if data_key and data_key in plan_data:
+                    plan_data[data_key] = processed_data
+                else:
+                    # Create dynamic section for unmapped sheets
+                    section_key = sheet_name.lower().replace(' ', '_').replace('-', '_')
+                    plan_data[section_key] = processed_data
+                    logger.info(f"Created dynamic section: {section_key}")
+                
+            except Exception as e:
+                logger.error(f"Error processing sheet {sheet_name}: {e}")
+                error_data = {
+                    'content': [],
+                    'tables': [],
+                    'images': [],
+                    'metadata': {'error': str(e), 'sheet_name': sheet_name}
+                }
+                
+                if data_key and data_key in plan_data:
+                    plan_data[data_key] = error_data
+                else:
+                    section_key = sheet_name.lower().replace(' ', '_').replace('-', '_')
+                    plan_data[section_key] = error_data
         
         return plan_data
         
@@ -173,6 +386,20 @@ async def root():
 async def create_plan(plan_data: ProjectPlanCreate):
     """Create a new project plan"""
     plan_dict = plan_data.dict()
+    
+    # Initialize with empty structured sections for manual plans
+    for section_key in ['title_sheet', 'revision_history', 'definitions_references', 
+                       'project_introduction', 'resource_plan', 'pmc_objectives',
+                       'quality_management', 'dar_tailoring', 'risk_management',
+                       'opportunity_management', 'configuration_management',
+                       'deliverables', 'skill_matrix', 'supplier_management']:
+        plan_dict[section_key] = {
+            'content': [],
+            'tables': [],
+            'images': [],
+            'metadata': {'sheet_name': section_key.replace('_', ' ').title(), 'manual_creation': True}
+        }
+    
     plan_obj = ProjectPlan(**plan_dict)
     
     # Prepare for MongoDB
@@ -198,8 +425,8 @@ async def upload_plan_from_excel(
         content = await file.read()
         excel_data = pd.ExcelFile(io.BytesIO(content))
         
-        # Process Excel data
-        plan_sections = process_excel_data(excel_data)
+        # Process Excel data with enhanced processing
+        plan_sections = process_excel_data(excel_data, content)
         
         # Create plan object
         plan_obj = ProjectPlan(
