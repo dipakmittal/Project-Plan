@@ -252,14 +252,10 @@ def main():
     except Exception as e:
         print(f"   Expected error for invalid file: {str(e)}")
     
-    # Cleanup (optional - comment out if you want to keep test data)
+    # Cleanup (keeping test data for further testing)
     print("\n📍 PHASE 10: Cleanup")
-    cleanup_choice = input("Do you want to clean up created test plans? (y/n): ").lower()
-    if cleanup_choice == 'y':
-        tester.cleanup_created_plans()
-    else:
-        print("   Skipping cleanup - test plans will remain in database")
-        print(f"   Created plan IDs: {tester.created_plan_ids}")
+    print("   Skipping cleanup - test plans will remain for frontend testing")
+    print(f"   Created plan IDs: {tester.created_plan_ids}")
     
     # Final results
     print("\n" + "=" * 60)
